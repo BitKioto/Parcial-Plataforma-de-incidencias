@@ -37,6 +37,22 @@ builder.Services.AddDefaultIdentity<IdentityUser>(options => options.SignIn.Requ
     .AddEntityFrameworkStores<ApplicationDbContext>();
 builder.Services.AddControllersWithViews();
 
+// Caché distribuida con Redis para el listado general de incidencias.
+// La cadena de conexión se resuelve, por orden de precedencia, desde:
+//   1. Variable de entorno / clave de configuración "RedisConnection".
+//   2. ConnectionStrings:Redis (appsettings.json).
+//   3. localhost:6379 como valor por defecto.
+// "abortConnect=false" evita que la aplicación falle al arrancar si Redis no está disponible.
+var redisConnection = builder.Configuration["RedisConnection"]
+    ?? builder.Configuration.GetConnectionString("Redis")
+    ?? "localhost:6379,abortConnect=false";
+
+builder.Services.AddStackExchangeRedisCache(options =>
+{
+    options.Configuration = redisConnection;
+    options.InstanceName = builder.Configuration["RedisInstanceName"] ?? "PlataformaIncidencias:";
+});
+
 // Cliente de sólo consulta de Algolia. Se construye con la Search API Key (nunca con la Admin API Key)
 // y sólo se registra si hay credenciales: SearchConfig lanza si AppId o ApiKey vienen vacíos.
 var algolia = builder.Configuration.GetSection(AlgoliaSettings.SectionName).Get<AlgoliaSettings>() ?? new AlgoliaSettings();

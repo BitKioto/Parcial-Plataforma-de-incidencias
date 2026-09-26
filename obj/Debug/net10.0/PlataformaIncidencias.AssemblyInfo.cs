@@ -15,7 +15,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("PlataformaIncidencias")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+3d9668dcb2201a21e5d65c0377d507131a95d40a")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+60aca4f747aaec6f3c4ffb6577ec8932025f23ce")]
 [assembly: System.Reflection.AssemblyProductAttribute("PlataformaIncidencias")]
 [assembly: System.Reflection.AssemblyTitleAttribute("PlataformaIncidencias")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

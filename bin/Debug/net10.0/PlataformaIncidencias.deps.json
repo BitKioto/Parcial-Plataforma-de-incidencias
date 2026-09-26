@@ -13,7 +13,8 @@
           "Microsoft.AspNetCore.Identity.EntityFrameworkCore": "10.0.12",
           "Microsoft.AspNetCore.Identity.UI": "10.0.12",
           "Microsoft.EntityFrameworkCore.Design": "10.0.12",
-          "Microsoft.EntityFrameworkCore.Sqlite": "10.0.12"
+          "Microsoft.EntityFrameworkCore.Sqlite": "10.0.12",
+          "Microsoft.Extensions.Caching.StackExchangeRedis": "10.0.12"
         },
         "runtime": {
           "PlataformaIncidencias.dll": {}
@@ -427,6 +428,17 @@
           }
         }
       },
+      "Microsoft.Extensions.Caching.StackExchangeRedis/10.0.12": {
+        "dependencies": {
+          "StackExchange.Redis": "2.7.27"
+        },
+        "runtime": {
+          "lib/net10.0/Microsoft.Extensions.Caching.StackExchangeRedis.dll": {
+            "assemblyVersion": "10.0.12.0",
+            "fileVersion": "10.0.1226.42308"
+          }
+        }
+      },
       "Microsoft.Extensions.DependencyModel/10.0.12": {
         "runtime": {
           "lib/net10.0/Microsoft.Extensions.DependencyModel.dll": {
@@ -459,6 +471,14 @@
           "lib/net6.0/Newtonsoft.Json.dll": {
             "assemblyVersion": "13.0.0.0",
             "fileVersion": "13.0.4.30916"
+          }
+        }
+      },
+      "Pipelines.Sockets.Unofficial/2.2.8": {
+        "runtime": {
+          "lib/net5.0/Pipelines.Sockets.Unofficial.dll": {
+            "assemblyVersion": "1.0.0.0",
+            "fileVersion": "2.2.8.1080"
           }
         }
       },
@@ -604,6 +624,17 @@
           "lib/net6.0/SQLitePCLRaw.provider.e_sqlite3.dll": {
             "assemblyVersion": "2.1.12.3116",
             "fileVersion": "2.1.12.3116"
+          }
+        }
+      },
+      "StackExchange.Redis/2.7.27": {
+        "dependencies": {
+          "Pipelines.Sockets.Unofficial": "2.2.8"
+        },
+        "runtime": {
+          "lib/net6.0/StackExchange.Redis.dll": {
+            "assemblyVersion": "2.0.0.0",
+            "fileVersion": "2.7.27.49176"
           }
         }
       },
@@ -809,6 +840,13 @@
       "path": "microsoft.entityframeworkcore.sqlite.core/10.0.12",
       "hashPath": "microsoft.entityframeworkcore.sqlite.core.10.0.12.nupkg.sha512"
     },
+    "Microsoft.Extensions.Caching.StackExchangeRedis/10.0.12": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-iQoMgbt02dl49cv7GLNeh771xstAbg9xKpuWosYmnOU0CJ9ni10F3+1IrgvbjyaV0JGulauGRrNir50QKWonKQ==",
+      "path": "microsoft.extensions.caching.stackexchangeredis/10.0.12",
+      "hashPath": "microsoft.extensions.caching.stackexchangeredis.10.0.12.nupkg.sha512"
+    },
     "Microsoft.Extensions.DependencyModel/10.0.12": {
       "type": "package",
       "serviceable": true,
@@ -837,6 +875,13 @@
       "path": "newtonsoft.json/13.0.4",
       "hashPath": "newtonsoft.json.13.0.4.nupkg.sha512"
     },
+    "Pipelines.Sockets.Unofficial/2.2.8": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-zG2FApP5zxSx6OcdJQLbZDk2AVlN2BNQD6MorwIfV6gVj0RRxWPEp2LXAxqDGZqeNV1Zp0BNPcNaey/GXmTdvQ==",
+      "path": "pipelines.sockets.unofficial/2.2.8",
+      "hashPath": "pipelines.sockets.unofficial.2.2.8.nupkg.sha512"
+    },
     "SQLitePCLRaw.bundle_e_sqlite3/2.1.12": {
       "type": "package",
       "serviceable": true,
@@ -864,6 +909,13 @@
       "sha512": "sha512-W3oH4XIfCzFrgUSDKHhN6N+dgzA5YHOR2VxX8GB6Qy7CyrJJgxPEG8NirgYWlPQC5P2jz2knSsexWu4tDUL33g==",
       "path": "sqlitepclraw.provider.e_sqlite3/2.1.12",
       "hashPath": "sqlitepclraw.provider.e_sqlite3.2.1.12.nupkg.sha512"
+    },
+    "StackExchange.Redis/2.7.27": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-Uqc2OQHglqj9/FfGQ6RkKFkZfHySfZlfmbCl+hc+u2I/IqunfelQ7QJi7ZhvAJxUtu80pildVX6NPLdDaUffOw==",
+      "path": "stackexchange.redis/2.7.27",
+      "hashPath": "stackexchange.redis.2.7.27.nupkg.sha512"
     },
     "System.CodeDom/6.0.0": {
       "type": "package",
