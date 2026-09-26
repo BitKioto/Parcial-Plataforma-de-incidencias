@@ -8,6 +8,7 @@ using Microsoft.Extensions.Options;
 using PlataformaIncidencias.Areas.Operaciones.Models;
 using PlataformaIncidencias.Data;
 using PlataformaIncidencias.Models;
+using System.Net.Http.Json;
 using System.Text.Json;
 
 namespace PlataformaIncidencias.Areas.Operaciones.Controllers;
@@ -17,12 +18,16 @@ namespace PlataformaIncidencias.Areas.Operaciones.Controllers;
 /// El listado general se sirve desde la caché de Redis (con escritura de 60 segundos);
 /// la búsqueda de texto se delega en Algolia, pero el estado se resuelve siempre
 /// contra la base de datos local: sólo se muestran incidencias con estado "Abierta".
+/// El cierre de una incidencia publica además un evento en tiempo real en PieSocket.
 /// </summary>
 [Area("Operaciones")]
 public class IncidenciasController : Controller
 {
     /// <summary>Clave bajo la que se cachea el listado general de incidencias abiertas.</summary>
     public const string CacheKeyListadoGeneral = "IncidenciasAbiertasList";
+
+    /// <summary>Evento publicado en el canal de PieSocket cuando cambia el estado de una incidencia.</summary>
+    public const string EventoIncidenciaActualizada = "IncidenciaActualizada";
 
     /// <summary>Vigencia de la entrada de caché del listado general.</summary>
     private static readonly TimeSpan CacheExpiracionListado = TimeSpan.FromSeconds(60);
@@ -41,8 +46,16 @@ public class IncidenciasController : Controller
 
     private static readonly JsonSerializerOptions OpcionesJsonCache = new(JsonSerializerDefaults.Web);
 
+    /// <summary>
+    /// Cliente HTTP reutilizado para la API de publicación de PieSocket. Estático y único por
+    /// proceso a propósito: PieSocket expone la publicación por REST, y mantener una sola
+    /// instancia evita agotar los sockets al encadenar publicaciones.
+    /// </summary>
+    private static readonly HttpClient HttpPieSocket = new() { Timeout = TimeSpan.FromSeconds(10) };
+
     private readonly ApplicationDbContext _context;
     private readonly IDistributedCache _cache;
+    private readonly IConfiguration _configuration;
     private readonly AlgoliaSettings _algolia;
     private readonly ILogger<IncidenciasController> _logger;
 
@@ -56,15 +69,73 @@ public class IncidenciasController : Controller
     public IncidenciasController(
         ApplicationDbContext context,
         IDistributedCache cache,
+        IConfiguration configuration,
         IOptions<AlgoliaSettings> algoliaOptions,
         ILogger<IncidenciasController> logger,
         ISearchClient? algoliaClient = null)
     {
         _context = context;
         _cache = cache;
+        _configuration = configuration;
         _algolia = algoliaOptions.Value;
         _logger = logger;
         _algoliaClient = algoliaClient;
+    }
+
+    /// <summary>
+    /// Canal, credenciales y endpoints de PieSocket ya resueltos.
+    /// </summary>
+    /// <param name="UrlWebSocket">URL <c>wss://</c> que consume el navegador para suscribirse.</param>
+    /// <param name="ApiKey">API Key de PieSocket.</param>
+    /// <param name="Canal">Identificador del canal de pub/sub.</param>
+    /// <param name="UrlPublicacion">Endpoint REST que el backend usa para publicar.</param>
+    public sealed record ConfiguracionPieHost(string UrlWebSocket, string ApiKey, string Canal, string UrlPublicacion)
+    {
+        /// <summary>Indica si hay credenciales suficientes para publicar.</summary>
+        public bool IsConfigured => !string.IsNullOrWhiteSpace(ApiKey) && !string.IsNullOrWhiteSpace(Canal);
+    }
+
+    /// <summary>
+    /// Resuelve la configuración de PieSocket. Las variables de entorno
+    /// <c>PIEHOST_WEBSOCKET_URL</c> y <c>PIEHOST_API_KEY</c> tienen precedencia sobre la
+    /// sección <c>PieHost</c> de appsettings.json.
+    /// </summary>
+    /// <remarks>
+    /// Es <see langword="public"/> y <see langword="static"/> para que la vista pueda obtener
+    /// la URL de suscripción sin duplicar esta lógica ni ampliar el modelo de vista.
+    /// </remarks>
+    public static ConfiguracionPieHost ResolverConfiguracionPieHost(IConfiguration configuration)
+    {
+        ArgumentNullException.ThrowIfNull(configuration);
+
+        var cluster = configuration["PieHost:ClusterId"]?.Trim();
+        var canal = configuration["PieHost:ChannelId"]?.Trim();
+        var apiKey = configuration["PIEHOST_API_KEY"] ?? configuration["PieHost:ApiKey"];
+
+        cluster = string.IsNullOrWhiteSpace(cluster) ? "demo" : cluster;
+        canal = string.IsNullOrWhiteSpace(canal) ? "incidencias" : canal;
+        apiKey = apiKey?.Trim() ?? string.Empty;
+
+        // URL de suscripción del navegador. "notify_self=1" hace que también reciba el evento
+        // el supervisor que publicó el cierre desde su propia sesión.
+        var urlWebSocket = configuration["PIEHOST_WEBSOCKET_URL"] ?? configuration["PieHost:WebSocketUrl"];
+        if (string.IsNullOrWhiteSpace(urlWebSocket))
+        {
+            urlWebSocket = string.IsNullOrWhiteSpace(apiKey)
+                ? string.Empty
+                : $"wss://{cluster}.piesocket.com/v3/{Uri.EscapeDataString(canal)}" +
+                  $"?api_key={Uri.EscapeDataString(apiKey)}&notify_self=1&source=aspnetcore&presence=0";
+        }
+
+        // Endpoint REST de publicación. Se permite sobreescribirlo completo porque PieSocket
+        // admite dominios de cluster personalizados, no sólo *.piesocket.com.
+        var urlPublicacion = configuration["PIEHOST_PUBLISH_URL"] ?? configuration["PieHost:PublishUrl"];
+        if (string.IsNullOrWhiteSpace(urlPublicacion))
+        {
+            urlPublicacion = $"https://{cluster}.piesocket.com/api/publish?src=aspnetcore-plataforma&v=3";
+        }
+
+        return new ConfiguracionPieHost(urlWebSocket.Trim(), apiKey, canal, urlPublicacion.Trim());
     }
 
     /// <summary>
@@ -107,11 +178,76 @@ public class IncidenciasController : Controller
         }
 
         incidencia.Estado = EstadoCerrada;
+
+        // 1) Se persiste primero: la base de datos es la fuente de verdad del estado.
         await _context.SaveChangesAsync(cancellationToken);
 
+        // 2) La caché ya no refleja el estado real.
         await InvalidarCacheListadoGeneralAsync(cancellationToken);
 
+        // 3) Sólo después de persistir se avisa a los navegadores conectados al canal.
+        await PublicarIncidenciaActualizadaAsync(incidencia, cancellationToken);
+
         return RedirectToAction(nameof(Index));
+    }
+
+    /// <summary>
+    /// Publica en el canal de PieSocket el evento <c>IncidenciaActualizada</c> con el
+    /// identificador y el nuevo estado. Un fallo de publicación no debe impedir el cierre,
+    /// que ya está confirmado en la base de datos.
+    /// </summary>
+    private async Task PublicarIncidenciaActualizadaAsync(Incidencia incidencia, CancellationToken cancellationToken)
+    {
+        var pieHost = ResolverConfiguracionPieHost(_configuration);
+
+        if (!pieHost.IsConfigured)
+        {
+            _logger.LogWarning(
+                "No se publicó el evento '{Evento}' de la incidencia {Id}: falta la configuración de PieSocket. " +
+                "Defina 'PieHost' en appsettings.json o las variables de entorno PIEHOST_WEBSOCKET_URL y PIEHOST_API_KEY.",
+                EventoIncidenciaActualizada, incidencia.Id);
+            return;
+        }
+
+        // Sobre de PieSocket (protocolo v3): { key, channelId, message: { event, data } }.
+        var sobre = new
+        {
+            key = pieHost.ApiKey,
+            channelId = pieHost.Canal,
+            message = new
+            {
+                @event = EventoIncidenciaActualizada,
+                data = new
+                {
+                    id = incidencia.Id,
+                    estado = incidencia.Estado,
+                    fecha = DateTime.UtcNow
+                }
+            }
+        };
+
+        try
+        {
+            using var respuesta = await HttpPieSocket.PostAsJsonAsync(pieHost.UrlPublicacion, sobre, cancellationToken);
+
+            if (!respuesta.IsSuccessStatusCode)
+            {
+                _logger.LogWarning(
+                    "No se publicó el evento '{Evento}' de la incidencia {Id}: PieSocket respondió {Estado}.",
+                    EventoIncidenciaActualizada, incidencia.Id, (int)respuesta.StatusCode);
+                return;
+            }
+
+            _logger.LogInformation(
+                "Evento '{Evento}' publicado en el canal '{Canal}' de PieSocket para la incidencia {Id}.",
+                EventoIncidenciaActualizada, pieHost.Canal, incidencia.Id);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex,
+                "No se pudo publicar el evento '{Evento}' de la incidencia {Id} en PieSocket.",
+                EventoIncidenciaActualizada, incidencia.Id);
+        }
     }
 
     /// <summary>
