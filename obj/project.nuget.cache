@@ -1,9 +1,10 @@
 {
   "version": 2,
-  "dgSpecHash": "RtyAzSQ+ABo=",
+  "dgSpecHash": "vCBGu1Awv8Y=",
   "success": true,
   "projectFilePath": "C:\\Users\\USER\\Desktop\\PlataformaIncidencias\\PlataformaIncidencias.csproj",
   "expectedPackageFiles": [
+    "C:\\Users\\USER\\.nuget\\packages\\algolia.search\\7.49.0\\algolia.search.7.49.0.nupkg.sha512",
     "C:\\Users\\USER\\.nuget\\packages\\humanizer.core\\2.14.1\\humanizer.core.2.14.1.nupkg.sha512",
     "C:\\Users\\USER\\.nuget\\packages\\microsoft.aspnetcore.diagnostics.entityframeworkcore\\10.0.12\\microsoft.aspnetcore.diagnostics.entityframeworkcore.10.0.12.nupkg.sha512",
     "C:\\Users\\USER\\.nuget\\packages\\microsoft.aspnetcore.identity.entityframeworkcore\\10.0.12\\microsoft.aspnetcore.identity.entityframeworkcore.10.0.12.nupkg.sha512",

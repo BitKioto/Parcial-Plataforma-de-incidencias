@@ -1,7 +1,53 @@
+@model IncidenciasIndexViewModel
 @{
     ViewData["Title"] = "Incidencias";
 }
 
-<h1>Incidencias abiertas</h1>
+<h1>Incidencias abiertas encontradas</h1>
 
-<!-- Listado de incidencias -->
+<form asp-area="Operaciones" asp-controller="Incidencias" asp-action="Index" method="get" class="mb-3">
+    <div class="input-group">
+        <input name="searchQuery" value="@Model.SearchQuery" class="form-control" placeholder="Buscar por estación o descripción" aria-label="Buscar por estación o descripción" />
+        <button type="submit" class="btn btn-primary">Buscar</button>
+    </div>
+</form>
+
+@if (Model.BusquedaRealizada)
+{
+    <p class="text-muted">
+        @(Model.Incidencias.Count == 0
+            ? $"No se encontraron incidencias abiertas para «{Model.SearchQuery}»."
+            : $"Incidencias abiertas que coinciden con «{Model.SearchQuery}»: {Model.Incidencias.Count}.")
+    </p>
+}
+
+@if (Model.Incidencias.Count == 0)
+{
+    <p id="sin-incidencias">No hay incidencias abiertas para mostrar.</p>
+}
+else
+{
+    <table class="table table-striped" id="tabla-incidencias">
+        <thead>
+            <tr>
+                <th>@Html.DisplayNameFor(m => m.Incidencias[0].Id)</th>
+                <th>@Html.DisplayNameFor(m => m.Incidencias[0].NombreEstacion)</th>
+                <th>@Html.DisplayNameFor(m => m.Incidencias[0].Descripcion)</th>
+                <th>@Html.DisplayNameFor(m => m.Incidencias[0].Estado)</th>
+                <th>@Html.DisplayNameFor(m => m.Incidencias[0].FechaReporte)</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var incidencia in Model.Incidencias)
+            {
+                <tr>
+                    <td>@incidencia.Id</td>
+                    <td>@incidencia.NombreEstacion</td>
+                    <td>@incidencia.Descripcion</td>
+                    <td>@incidencia.Estado</td>
+                    <td>@incidencia.FechaReporte.ToString("yyyy-MM-dd HH:mm")</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
