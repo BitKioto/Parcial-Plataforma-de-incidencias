@@ -2,6 +2,19 @@
   "version": 4,
   "targets": {
     "net10.0": {
+      "Algolia.Search/7.49.0": {
+        "type": "package",
+        "compile": {
+          "lib/netstandard2.1/Algolia.Search.dll": {
+            "related": ".xml"
+          }
+        },
+        "runtime": {
+          "lib/netstandard2.1/Algolia.Search.dll": {
+            "related": ".xml"
+          }
+        }
+      },
       "Humanizer.Core/2.14.1": {
         "type": "package",
         "compile": {
@@ -887,6 +900,23 @@
     }
   },
   "libraries": {
+    "Algolia.Search/7.49.0": {
+      "sha512": "TIdvfqRC+9e/2OZophCk/3SdoG+dQTzK+PHsifFI+wpV5ZWGjjgfUeHbcIdBcAOci8eEF71iTWaUHdJDjU5pBQ==",
+      "type": "package",
+      "path": "algolia.search/7.49.0",
+      "files": [
+        ".nupkg.metadata",
+        ".signature.p7s",
+        "README.md",
+        "algolia.search.7.49.0.nupkg.sha512",
+        "algolia.search.nuspec",
+        "icon.png",
+        "lib/netstandard2.0/Algolia.Search.dll",
+        "lib/netstandard2.0/Algolia.Search.xml",
+        "lib/netstandard2.1/Algolia.Search.dll",
+        "lib/netstandard2.1/Algolia.Search.xml"
+      ]
+    },
     "Humanizer.Core/2.14.1": {
       "sha512": "lQKvtaTDOXnoVJ20ibTuSIOf2i0uO0MPbDhd1jm238I+U/2ZnRENj0cktKZhtchBMtCUSRQ5v4xBCUbKNmyVMw==",
       "type": "package",
@@ -2685,6 +2715,7 @@
   },
   "projectFileDependencyGroups": {
     "net10.0": [
+      "Algolia.Search >= 7.49.0",
       "Microsoft.AspNetCore.Diagnostics.EntityFrameworkCore >= 10.0.12",
       "Microsoft.AspNetCore.Identity.EntityFrameworkCore >= 10.0.12",
       "Microsoft.AspNetCore.Identity.UI >= 10.0.12",
@@ -2738,6 +2769,10 @@
         "framework": "net10.0",
         "targetAlias": "net10.0",
         "dependencies": {
+          "Algolia.Search": {
+            "target": "Package",
+            "version": "[7.49.0, )"
+          },
           "Microsoft.AspNetCore.Diagnostics.EntityFrameworkCore": {
             "target": "Package",
             "version": "[10.0.12, )"
