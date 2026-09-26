@@ -1,9 +1,15 @@
 @model IncidenciasIndexViewModel
+@using PlataformaIncidencias.Areas.Operaciones.Controllers
+@inject Microsoft.Extensions.Configuration.IConfiguration Configuration
 @{
     ViewData["Title"] = "Incidencias";
+
+    // Se resuelve con la misma lógica que usa el controlador, para que la vista y el backend
+    // compartan una única fuente de verdad sobre el canal de PieSocket.
+    var pieHost = IncidenciasController.ResolverConfiguracionPieHost(Configuration);
 }
 
-<h1>Incidencias abiertas con consulta rápida</h1>
+<h1>Incidencias abiertas en tiempo real</h1>
 
 <form asp-area="Operaciones" asp-controller="Incidencias" asp-action="Index" method="get" class="mb-3">
     <div class="input-group">
@@ -12,50 +18,176 @@
     </div>
 </form>
 
-@if (Model.BusquedaRealizada)
-{
-    <p class="text-muted">
-        @(Model.Incidencias.Count == 0
-            ? $"No se encontraron incidencias abiertas para «{Model.SearchQuery}»."
-            : $"Incidencias abiertas que coinciden con «{Model.SearchQuery}»: {Model.Incidencias.Count}.")
-    </p>
+@*
+    Contenedor estable del listado: el cliente WebSocket intercambia únicamente su
+    contenido interno, de modo que este nodo (y sus atributos de configuración) sobrevive
+    a las actualizaciones en tiempo real.
+*@
+<div id="listado-incidencias" data-piehost-url="@pieHost.UrlWebSocket" data-piehost-evento="@IncidenciasController.EventoIncidenciaActualizada">
+    <div id="lista-actual">
+        @if (Model.BusquedaRealizada)
+        {
+            <p class="text-muted">
+                @(Model.Incidencias.Count == 0
+                    ? $"No se encontraron incidencias abiertas para «{Model.SearchQuery}»."
+                    : $"Incidencias abiertas que coinciden con «{Model.SearchQuery}»: {Model.Incidencias.Count}.")
+            </p>
+        }
+
+        @if (Model.Incidencias.Count == 0)
+        {
+            <p id="sin-incidencias">No hay incidencias abiertas para mostrar.</p>
+        }
+        else
+        {
+            <table class="table table-striped" id="tabla-incidencias">
+                <thead>
+                    <tr>
+                        <th>@Html.DisplayNameFor(m => m.Incidencias[0].Id)</th>
+                        <th>@Html.DisplayNameFor(m => m.Incidencias[0].NombreEstacion)</th>
+                        <th>@Html.DisplayNameFor(m => m.Incidencias[0].Descripcion)</th>
+                        <th>@Html.DisplayNameFor(m => m.Incidencias[0].Estado)</th>
+                        <th>@Html.DisplayNameFor(m => m.Incidencias[0].FechaReporte)</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var incidencia in Model.Incidencias)
+                    {
+                        <tr id="incidencia-@incidencia.Id">
+                            <td>@incidencia.Id</td>
+                            <td>@incidencia.NombreEstacion</td>
+                            <td>@incidencia.Descripcion</td>
+                            <td>@incidencia.Estado</td>
+                            <td>@incidencia.FechaReporte.ToString("yyyy-MM-dd HH:mm")</td>
+                            <td>
+                                @* El cierre invalida la caché del listado general: por eso vive en el controlador, no en la vista. *@
+                                <form asp-area="Operaciones" asp-controller="Incidencias" asp-action="CerrarIncidencia" method="post" class="d-inline">
+                                    <input type="hidden" name="id" value="@incidencia.Id" />
+                                    <button type="submit" class="btn btn-sm btn-outline-secondary">Cerrar</button>
+                                </form>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </div>
+</div>
+
+@section Scripts {
+    <script>
+        (function () {
+            'use strict';
+
+            var contenedor = document.getElementById('listado-incidencias');
+            if (!contenedor) { return; }
+
+            var url = contenedor.dataset.piehostUrl;
+            var evento = contenedor.dataset.piehostEvento || 'IncidenciaActualizada';
+
+            // Sin credenciales de PieSocket la vista sigue siendo utilizable: sólo se pierde
+            // la actualización en tiempo real.
+            if (!url) { return; }
+
+            var RETARDO_MINIMO_MS = 1000;
+            var RETARDO_MAXIMO_MS = 30000;
+            var socket = null;
+            var temporizador = null;
+            var intento = 0;
+
+            function listaActual() {
+                return document.getElementById('lista-actual');
+            }
+
+            function marcarListaVacia() {
+                var lista = listaActual();
+                if (!lista) { return; }
+
+                if (lista.querySelector('tbody tr')) { return; }
+
+                lista.innerHTML = '<p id="sin-incidencias">No hay incidencias abiertas para mostrar.</p>';
+            }
+
+            // Consulta el estado vigente al servidor y reemplaza sólo el listado, sin recargar la página.
+            function refrescarListado() {
+                fetch(window.location.href, { cache: 'no-store', credentials: 'same-origin' })
+                    .then(function (respuesta) {
+                        if (!respuesta.ok) { throw new Error('HTTP ' + respuesta.status); }
+                        return respuesta.text();
+                    })
+                    .then(function (html) {
+                        var documento = new DOMParser().parseFromString(html, 'text/html');
+                        var nuevaLista = documento.getElementById('lista-actual');
+                        var lista = listaActual();
+
+                        if (nuevaLista && lista) {
+                            lista.innerHTML = nuevaLista.innerHTML;
+                        }
+                    })
+                    .catch(function (error) {
+                        console.warn('[PieSocket] No se pudo refrescar el listado:', error);
+                    });
+            }
+
+            // Al recibir el evento se retira la fila de la incidencia, sin recargar.
+            function alRecibirIncidenciaActualizada(payload) {
+                if (!payload || payload.estado !== 'Cerrada') { return; }
+
+                var fila = document.getElementById('incidencia-' + payload.id);
+                if (fila) {
+                    fila.remove();
+                    marcarListaVacia();
+                }
+            }
+
+            function programarReconeccion() {
+                if (temporizador) { window.clearTimeout(temporizador); }
+
+                // Espera exponencial acotada para no martillear el servidor si cae.
+                var espera = Math.min(RETARDO_MINIMO_MS * Math.pow(2, intento), RETARDO_MAXIMO_MS);
+                intento++;
+
+                temporizador = window.setTimeout(conectar, espera);
+            }
+
+            function conectar() {
+                socket = new WebSocket(url);
+
+                socket.onopen = function () {
+                    intento = 0;
+                    // En la conexión inicial y en cada reconexión se consulta el estado vigente,
+                    // por si algún cambio se perdió mientras no había conexión.
+                    refrescarListado();
+                };
+
+                socket.onmessage = function (mensaje) {
+                    var envelope;
+
+                    try {
+                        envelope = JSON.parse(mensaje.data);
+                    } catch (error) {
+                        console.warn('[PieSocket] Mensaje no JSON:', error);
+                        return;
+                    }
+
+                    if (!envelope || envelope.event !== evento) { return; }
+
+                    alRecibirIncidenciaActualizada(envelope.data);
+                };
+
+                socket.onerror = function () {
+                    // onclose se encarga de programar la reconexión.
+                    socket.close();
+                };
+
+                socket.onclose = function () {
+                    programarReconeccion();
+                };
+            }
+
+            conectar();
+        })();
+    </script>
 }
 
-@if (Model.Incidencias.Count == 0)
-{
-    <p id="sin-incidencias">No hay incidencias abiertas para mostrar.</p>
-}
-else
-{
-    <table class="table table-striped" id="tabla-incidencias">
-        <thead>
-            <tr>
-                <th>@Html.DisplayNameFor(m => m.Incidencias[0].Id)</th>
-                <th>@Html.DisplayNameFor(m => m.Incidencias[0].NombreEstacion)</th>
-                <th>@Html.DisplayNameFor(m => m.Incidencias[0].Descripcion)</th>
-                <th>@Html.DisplayNameFor(m => m.Incidencias[0].Estado)</th>
-                <th>@Html.DisplayNameFor(m => m.Incidencias[0].FechaReporte)</th>
-                <th></th>
-            </tr>
-        </thead>
-        <tbody>
-            @foreach (var incidencia in Model.Incidencias)
-            {
-                <tr>
-                    <td>@incidencia.Id</td>
-                    <td>@incidencia.NombreEstacion</td>
-                    <td>@incidencia.Descripcion</td>
-                    <td>@incidencia.Estado</td>
-                    <td>@incidencia.FechaReporte.ToString("yyyy-MM-dd HH:mm")</td>
-                    <td>
-                        @* El cierre invalida la caché del listado general: por eso vive en el controlador, no en la vista. *@
-                        <form asp-area="Operaciones" asp-controller="Incidencias" asp-action="CerrarIncidencia" method="post" class="d-inline">
-                            <input type="hidden" name="id" value="@incidencia.Id" />
-                            <button type="submit" class="btn btn-sm btn-outline-secondary">Cerrar</button>
-                        </form>
-                    </td>
-                </tr>
-            }
-        </tbody>
-    </table>
-}
