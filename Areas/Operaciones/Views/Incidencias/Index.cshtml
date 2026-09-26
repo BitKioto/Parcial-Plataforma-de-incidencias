@@ -3,7 +3,7 @@
     ViewData["Title"] = "Incidencias";
 }
 
-<h1>Incidencias abiertas encontradas</h1>
+<h1>Incidencias abiertas con consulta rápida</h1>
 
 <form asp-area="Operaciones" asp-controller="Incidencias" asp-action="Index" method="get" class="mb-3">
     <div class="input-group">
@@ -35,6 +35,7 @@ else
                 <th>@Html.DisplayNameFor(m => m.Incidencias[0].Descripcion)</th>
                 <th>@Html.DisplayNameFor(m => m.Incidencias[0].Estado)</th>
                 <th>@Html.DisplayNameFor(m => m.Incidencias[0].FechaReporte)</th>
+                <th></th>
             </tr>
         </thead>
         <tbody>
@@ -46,6 +47,13 @@ else
                     <td>@incidencia.Descripcion</td>
                     <td>@incidencia.Estado</td>
                     <td>@incidencia.FechaReporte.ToString("yyyy-MM-dd HH:mm")</td>
+                    <td>
+                        @* El cierre invalida la caché del listado general: por eso vive en el controlador, no en la vista. *@
+                        <form asp-area="Operaciones" asp-controller="Incidencias" asp-action="CerrarIncidencia" method="post" class="d-inline">
+                            <input type="hidden" name="id" value="@incidencia.Id" />
+                            <button type="submit" class="btn btn-sm btn-outline-secondary">Cerrar</button>
+                        </form>
+                    </td>
                 </tr>
             }
         </tbody>

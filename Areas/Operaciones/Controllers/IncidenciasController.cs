@@ -3,21 +3,33 @@ using Algolia.Search.Exceptions;
 using Algolia.Search.Models.Search;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Options;
 using PlataformaIncidencias.Areas.Operaciones.Models;
 using PlataformaIncidencias.Data;
 using PlataformaIncidencias.Models;
+using System.Text.Json;
 
 namespace PlataformaIncidencias.Areas.Operaciones.Controllers;
 
 /// <summary>
 /// Listado y búsqueda de incidencias.
-/// La búsqueda de texto se delega en Algolia, pero el estado se resuelve siempre
+/// El listado general se sirve desde la caché de Redis (con escritura de 60 segundos);
+/// la búsqueda de texto se delega en Algolia, pero el estado se resuelve siempre
 /// contra la base de datos local: sólo se muestran incidencias con estado "Abierta".
 /// </summary>
 [Area("Operaciones")]
 public class IncidenciasController : Controller
 {
+    /// <summary>Clave bajo la que se cachea el listado general de incidencias abiertas.</summary>
+    public const string CacheKeyListadoGeneral = "IncidenciasAbiertasList";
+
+    /// <summary>Vigencia de la entrada de caché del listado general.</summary>
+    private static readonly TimeSpan CacheExpiracionListado = TimeSpan.FromSeconds(60);
+
+    /// <summary>Estado al que pasa una incidencia al cerrarse.</summary>
+    private const string EstadoCerrada = "Cerrada";
+
     /// <summary>Número máximo de hits solicitados a Algolia por consulta.</summary>
     private const int HitsPorPagina = 50;
 
@@ -27,7 +39,10 @@ public class IncidenciasController : Controller
     /// </summary>
     private const int TamanoLoteIds = 500;
 
+    private static readonly JsonSerializerOptions OpcionesJsonCache = new(JsonSerializerDefaults.Web);
+
     private readonly ApplicationDbContext _context;
+    private readonly IDistributedCache _cache;
     private readonly AlgoliaSettings _algolia;
     private readonly ILogger<IncidenciasController> _logger;
 
@@ -40,11 +55,13 @@ public class IncidenciasController : Controller
 
     public IncidenciasController(
         ApplicationDbContext context,
+        IDistributedCache cache,
         IOptions<AlgoliaSettings> algoliaOptions,
         ILogger<IncidenciasController> logger,
         ISearchClient? algoliaClient = null)
     {
         _context = context;
+        _cache = cache;
         _algolia = algoliaOptions.Value;
         _logger = logger;
         _algoliaClient = algoliaClient;
@@ -64,11 +81,126 @@ public class IncidenciasController : Controller
         };
 
         viewModel.Incidencias = viewModel.BusquedaRealizada
-            ? await BuscarAbiertasEnAlgoliaAsync(viewModel.SearchQuery, cancellationToken)
-            : await ObtenerTodasLasAbiertasAsync(cancellationToken);
+            ? await BuscarAbiertasEnAlgoliaAsync(viewModel.SearchQuery, cancellationToken)   // Las búsquedas con término no usan caché.
+            : await ObtenerListadoGeneralConCacheAsync(cancellationToken);
 
         return View(viewModel);
     }
+
+    /// <summary>
+    /// Cierra una incidencia e invalida la caché del listado general, que ya no reflejaría
+    /// el estado real antes de que expirasen sus 60 segundos de vigencia.
+    /// </summary>
+    /// <param name="id">Identificador de la incidencia a cerrar.</param>
+    /// <param name="cancellationToken">Token de cancelación de la petición.</param>
+    [HttpPost]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> CerrarIncidencia(int id, CancellationToken cancellationToken)
+    {
+        var incidencia = await _context.Incidencias
+            .FirstOrDefaultAsync(i => i.Id == id, cancellationToken);
+
+        if (incidencia is null)
+        {
+            _logger.LogWarning("No se pudo cerrar la incidencia {Id}: no existe.", id);
+            return NotFound($"La incidencia {id} no existe.");
+        }
+
+        incidencia.Estado = EstadoCerrada;
+        await _context.SaveChangesAsync(cancellationToken);
+
+        await InvalidarCacheListadoGeneralAsync(cancellationToken);
+
+        return RedirectToAction(nameof(Index));
+    }
+
+    /// <summary>
+    /// Listado general servido desde Redis: en HIT devuelve el contenido cacheado y en MISS
+    /// consulta la base de datos local y almacena el resultado durante 60 segundos.
+    /// </summary>
+    private async Task<IReadOnlyList<Incidencia>> ObtenerListadoGeneralConCacheAsync(CancellationToken cancellationToken)
+    {
+        var desdeCache = await LeerListadoGeneralDesdeCacheAsync(cancellationToken);
+        if (desdeCache is not null)
+        {
+            _logger.LogInformation("Lectura de listado general desde: REDIS CACHE");
+            return desdeCache;
+        }
+
+        var abiertas = await ObtenerTodasLasAbiertasAsync(cancellationToken);
+        _logger.LogInformation("Lectura de listado general desde: BASE DE DATOS");
+
+        await GuardarListadoGeneralEnCacheAsync(abiertas, cancellationToken);
+
+        return abiertas;
+    }
+
+    /// <summary>
+    /// Devuelve el listado cacheado, o <see langword="null"/> en caso de fallo (MISS).
+    /// Si Redis no está disponible se registra una advertencia y se sigue con la base de datos,
+    /// de modo que la caché degradada no provoque un error en la petición.
+    /// </summary>
+    private async Task<List<Incidencia>?> LeerListadoGeneralDesdeCacheAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var json = await _cache.GetStringAsync(CacheKeyListadoGeneral, cancellationToken);
+            if (string.IsNullOrWhiteSpace(json))
+            {
+                return null;
+            }
+
+            return JsonSerializer.Deserialize<List<Incidencia>>(json, OpcionesJsonCache);
+        }
+        catch (JsonException ex)
+        {
+            // Contenido corrupto o de una versión anterior: se descarta para forzar un MISS.
+            _logger.LogWarning(ex, "La entrada de caché '{Clave}' no se pudo deserializar; se descarta.", CacheKeyListadoGeneral);
+            await InvalidarCacheListadoGeneralAsync(CancellationToken.None);
+            return null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "No se pudo leer la caché '{Clave}'; se continúa con la base de datos.", CacheKeyListadoGeneral);
+            return null;
+        }
+    }
+
+    /// <summary>Guarda el listado general en Redis con una vigencia de 60 segundos.</summary>
+    private async Task GuardarListadoGeneralEnCacheAsync(List<Incidencia> abiertas, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var json = JsonSerializer.Serialize(abiertas, OpcionesJsonCache);
+
+            await _cache.SetStringAsync(CacheKeyListadoGeneral, json, new DistributedCacheEntryOptions
+            {
+                AbsoluteExpirationRelativeToNow = CacheExpiracionListado
+            }, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "No se pudo escribir la caché '{Clave}'.", CacheKeyListadoGeneral);
+        }
+    }
+
+    /// <summary>
+    /// Invalida la caché del listado general para que la siguiente lectura se resuelva
+    /// contra la base de datos.
+    /// </summary>
+    private async Task InvalidarCacheListadoGeneralAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _cache.RemoveAsync(CacheKeyListadoGeneral, cancellationToken);
+            _logger.LogInformation("Caché invalidada: {Clave}", CacheKeyListadoGeneral);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "No se pudo invalidar la caché '{Clave}'.", CacheKeyListadoGeneral);
+        }
+    }
+
 
     /// <summary>
     /// Listado habitual: todas las incidencias abiertas de la base de datos local.
